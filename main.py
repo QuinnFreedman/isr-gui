@@ -7,89 +7,13 @@ from PIL import Image
 from PIL.ImageQt import ImageQt
 
 from PySide6 import QtGui
-from PySide6.QtCore import Qt, Slot, QRectF, QSize, QPoint, QThread, Signal
+from PySide6.QtCore import Qt, Slot, QRectF, QSize, QPoint
 from PySide6.QtWidgets import (QApplication, QLabel, QPushButton, QWidget, QSpinBox,
                                QComboBox, QFileDialog,
                                QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout)
 
-import ISR
-
 from image_comparator_widget import ImageComparator
-
-# model = ISR.RRDN(weights='gans')
-
-import threading
-# import asyncio
-
-class Model:
-    class WorkerThread(QThread):
-        done = Signal(Image)
-
-        def __init__(self, model, parent=None):
-            super().__init__(parent)
-            self.model = model
-
-        def run(self):
-            print("Strting worker thread") 
-            import time
-            time.sleep(2)
-            print("worker thread done")
-            self.model._result = self.model._source.resize((self.model._source.width // 4, self.model._source.height // 4)).copy() 
-            self.done.emit()
-        
-    def __init__(self):
-        self._source = None
-        self._result = None
-        self._network = None
-        self.source_changed_listeners = []
-        self.result_changed_listeners = []
-        self.loading_listeners = []
-
-    def set_source(self, image):
-        self._source = image
-        self._result = None
-        for fn in self.source_changed_listeners:
-            fn(self._source)
-        for fn in self.result_changed_listeners:
-            fn(self._result)
-
-    def process_image(self):
-        print("process image")
-        for fn in self.loading_listeners:
-            fn(True)
-        self.thread = Model.WorkerThread(self)
-        self.thread.done.connect(self._did_process_image)
-        self.thread.start()
-        #self._result = self._source.copy()
-        #self._did_process_image()
-        
-    def _did_process_image(self):
-        print("_did_process_image:", self._result)
-        for fn in self.result_changed_listeners:
-            fn(self._result)
-            
-        for fn in self.loading_listeners:
-            fn(False)
-        
-
-    def add_source_listener(self, fn):
-        self.source_changed_listeners.append(fn)
-        
-    def remove_source_listener(self, fn):
-        self.source_changed_listeners.remove(fn)
-        
-    def add_result_listener(self, fn):
-        self.result_changed_listeners.append(fn)
-        
-    def remove_result_listener(self, fn):
-        self.result_changed_listeners.remove(fn)
-        
-    def add_loading_listener(self, fn):
-        self.loading_listeners.append(fn)
-        
-    def remove_loading_listener(self, fn):
-        self.loading_listeners.remove(fn)
-
+from model import Model
 
 class MainWindow(QWidget):
     def __init__(self):
@@ -130,10 +54,7 @@ class MainWindow(QWidget):
         model_label = QLabel("Model")
         model_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         model_combo_box = QComboBox()
-        model_combo_box.insertItem(0, "Model 1")
-        model_combo_box.insertItem(1, "Model 2")
-        model_combo_box.insertItem(2, "Model 3")
-        model_combo_box.insertItem(3, "Model 4")
+        model_combo_box.addItems(self.model.networks)
         model_label.setBuddy(model_combo_box)
 
         form = QWidget()
@@ -159,16 +80,22 @@ class MainWindow(QWidget):
         self.model_combo_box = model_combo_box
 
         upscale_button = QPushButton("\nUpscale\n")
+        upscale_button.setEnabled(False)
         upscale_button.clicked.connect(self.do_upscale)
 
         load_button = QPushButton("\nOpen\n")
         load_button.clicked.connect(self.load_image)
+        
+        save_button = QPushButton("\nSave\n")
+        save_button.setEnabled(False)
+        save_button.clicked.connect(self.save_image)
 
         self.ribbon = QWidget()
         self.ribbon_layout = QHBoxLayout(self.ribbon)
         self.ribbon_layout.addWidget(load_button)
         self.ribbon_layout.addWidget(form)
         self.ribbon_layout.addWidget(upscale_button)
+        self.ribbon_layout.addWidget(save_button)
         self.ribbon_layout.addStretch()
         
         self.view = ImageComparator()
@@ -182,6 +109,8 @@ class MainWindow(QWidget):
         self.model.add_source_listener(self.view.set_left_image)
         self.model.add_result_listener(self.view.set_right_image)
         self.model.add_loading_listener(lambda loading: upscale_button.setEnabled(not loading))
+        self.model.add_result_listener(lambda result: save_button.setEnabled(result is not None))
+        self.model.add_source_listener(lambda source: upscale_button.setEnabled(source is not None))
 
     def dragEnterEvent(self, e):
         if e.mimeData().hasImage() or e.mimeData().hasUrls():
@@ -212,13 +141,19 @@ class MainWindow(QWidget):
             self.model.set_source(image)
 
     def do_upscale(self):
-        print("    c:", self.c_spin_box.value())
-        print("    d:", self.d_spin_box.value())
-        print("    g:", self.g_spin_box.value())
-        print("   g0:", self.g0_spin_box.value())
-        print("    x:", self.x_spin_box.value())
-        print("model:", self.model_combo_box.currentIndex())
-        self.model.process_image()
+        c = self.c_spin_box.value()
+        d = self.d_spin_box.value()
+        g = self.g_spin_box.value()
+        g0 = self.g0_spin_box.value()
+        x = self.x_spin_box.value()
+        model = self.model_combo_box.currentIndex()
+        self.model.process_image(c=c, d=d, g=g, g0=g0, x=x, model=model)
+
+    def save_image(self):
+        options = QFileDialog.Options()
+        filename, _ = QFileDialog.getSaveFileName(self,"Save Image", "Untitled.png", "PNG (*.png);;JPEG (*.jpg);;All Files (*)", options=options)
+        if filename:
+            self.model.save(filename)
 
 
 
